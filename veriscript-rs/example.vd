@@ -1,0 +1,23 @@
+// File di configurazione "importato" (simulato nel compilatore)
+// param INCLUDE_LOGIC_OPS = true;
+
+module alu {
+    port input a[32];
+    port input b[32];
+    port input opcode[3];
+    port output reg result[32];
+
+    combinatorial {
+        switch (opcode) {
+            case '3b000': result = a + b;
+            case '3b001': result = a - b;
+
+            gen if (INCLUDE_LOGIC_OPS) {
+               case '3b010': result = a & b;
+               case '3b011': result = a | b;
+            }
+
+            default: result = 'x;
+        }
+    }
+}
