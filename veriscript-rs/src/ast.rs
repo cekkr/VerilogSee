@@ -32,17 +32,11 @@ pub enum Declaration {
 pub enum PortDirection { Input, Output }
 
 // Statement all'interno di un blocco (es. combinatorial)
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Statement {
-    Assignment {
-        target: String,
-        expr: Expr,
-    },
-    Switch {
-        switch_expr: Expr,
-        cases: Vec<(Expr, Box<Statement>)>,
-        default: Option<Box<Statement>>,
-    },
+    Module(String, Vec<Statement>),
+    VarDecl(String),
+    Assignment(String, String), // Per ora, RHS è solo un identificatore
 }
 
 // La radice del nostro AST
@@ -51,3 +45,4 @@ pub struct Module {
     pub name: String,
     pub declarations: Vec<Declaration>,
 }
+

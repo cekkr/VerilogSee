@@ -1,99 +1,49 @@
-// src/parser.rs
-
 use chumsky::prelude::*;
-use crate::token::Token;
+use chumsky::recursive::recursive;
+
 use crate::ast::*;
+use crate::token::{SimpleSpan, VToken};
 
-// Funzione principale che orchestra il parsing
-pub fn parser() -> impl Parser<Token, Module, Error = Simple<Token>> {
-    let ident = select! { Token::Identifier(s) => s }.labelled("identifier");
+// Alias di tipo per rendere le firme più pulite e leggibili
+type Span = SimpleSpan;
+type Spanned<T> = (T, Span);
+type TokenStream<'a> = &'a [Spanned<VToken>];
+type ParserError<'a> = extra::Err<Rich<'a, VToken, Span>>;
 
-    // Parser per espressioni semplici (per ora non gestisce la precedenza)
-    let expr = {
-        let literal = select! {
-            Token::Identifier(s) => Expr::Identifier(s),
-            Token::BitVector(s) => Expr::Literal(s),
-        };
-        let op = select! {
-            Token::Plus => Op::Plus, Token::Minus => Op::Minus,
-            Token::BitAnd => Op::BitAnd, Token::BitOr => Op::BitOr,
-        };
-        literal.clone()
-            .then(op.then(literal).repeated())
-            .foldl(|lhs, (op, rhs)| Expr::BinaryOp(Box::new(lhs), op, Box::new(rhs)))
-    };
+// Funzione helper per estrarre un identificatore come stringa
+fn ident<'a>() -> impl Parser<'a, TokenStream<'a>, String, ParserError<'a>> {
+    select! { VToken::Ident(s) => s }.labelled("identifier")
+}
 
-    // Parser per gli statement
-    let statement = recursive(|stmt| {
-        let assignment = ident
-            .then_ignore(just(Token::Assign))
-            .then(expr.clone())
-            .then_ignore(just(Token::Semicolon))
-            .map(|(target, expr)| Statement::Assignment { target, expr });
-
-        let case_stmt = just(Token::Case)
-            .ignore_then(expr.clone())
-            .then_ignore(just(Token::Colon))
-            .then(stmt.clone())
-            .map(|(case_expr, stmt)| (case_expr, Box::new(stmt)));
-            
-        let default_stmt = just(Token::Default)
-            .ignore_then(just(Token::Colon))
-            .ignore_then(stmt.clone())
-            .map(Box::new);
-
-        let switch = just(Token::Switch)
-            .ignore_then(expr.clone().delimited_by(just(Token::LParen), just(Token::RParen)))
-            .then(
-                case_stmt.repeated()
-                .then(default_stmt.or_not())
-                .delimited_by(just(Token::LBrace), just(Token::RBrace))
-            )
-            .map(|(switch_expr, (cases, default))| Statement::Switch { switch_expr, cases, default });
-        
-        assignment.or(switch)
-    });
-
-    // Parser per le dichiarazioni dentro un modulo
-    let declaration = recursive(|decl| {
-        let port_decl = just(Token::Port)
-            .ignore_then(select! { Token::Input => PortDirection::Input, Token::Output => PortDirection::Output })
-            .then(just(Token::Reg).or_not())
-            .then(ident)
-            .then(just(Token::LBracket).ignore_then(select!{Token::Integer(i) => i as u32}).ignore_then(just(Token::RBracket)))
-            .then_ignore(just(Token::Semicolon))
-            .map(|(((dir, is_reg), name), width)| Declaration::Port {
-                direction: dir, is_reg: is_reg.is_some(), name, width
+// La firma della funzione ora è corretta e chiara.
+// Il parser principale che definisce un modulo Verilog.
+pub fn module_parser<'a>() -> impl Parser<'a, TokenStream<'a>, Module, ParserError<'a>> {
+    // Un parser per dichiarazioni, definito ricorsivamente
+    let declaration = recursive(|_decl| {
+        // Esempio: una dichiarazione di porta (input/output)
+        let port_decl = choice((just(VToken::Input), just(VToken::Output)))
+            .then(just(VToken::Reg).or_not()) // opzionale [reg]
+            .then(ident())
+            .then_ignore(just(VToken::Semicolon))
+            .map(|((dir, reg), name)| {
+                let direction = if dir == VToken::Input { PortDirection::Input } else { PortDirection::Output };
+                Declaration::Port(Port {
+                    direction,
+                    is_reg: reg.is_some(),
+                    name,
+                })
             });
 
-        let combinatorial_block = just(Token::Combinatorial)
-            .ignore_then(statement.repeated().delimited_by(just(Token::LBrace), just(Token::RBrace)))
-            .map(Declaration::Combinatorial);
-
-        // Parsing di 'gen if'
-        let gen_if_block = just(Token::Gen).ignore_then(just(Token::If))
-            .ignore_then(ident.delimited_by(just(Token::LParen), just(Token::RParen)))
-            .then(
-                // Un `gen if` può contenere solo `case` statement per questo prototipo
-                 just(Token::Case).ignore_then(expr.clone()).then_ignore(just(Token::Colon))
-                .then(statement.clone())
-                .map(|(case_expr, stmt)| Declaration::Combinatorial(vec![Statement::Switch {
-                    switch_expr: Expr::Identifier("".to_string()), // Placeholder
-                    cases: vec![(case_expr, Box::new(stmt))],
-                    default: None,
-                }]))
-                .repeated()
-                .delimited_by(just(Token::LBrace), just(Token::RBrace))
-            )
-            .map(|(condition, declarations)| Declaration::ConditionalBlock { condition, declarations });
-        
-        port_decl.or(combinatorial_block).or(gen_if_block)
+        // Qui potresti aggiungere altri tipi di dichiarazioni con .or()
+        // es: .or(assignment).or(wire_decl)
+        port_decl
     });
-    
-    // Parser del modulo completo
-    just(Token::Module)
-        .ignore_then(ident)
-        .then(declaration.repeated().delimited_by(just(Token::LBrace), just(Token::RBrace)))
-        .map(|(name, declarations)| Module { name, declarations })
+
+    // Parser per un intero modulo
+    just(VToken::Module)
+        .ignore_then(ident())
+        .then(declaration.repeated().collect::<Vec<_>>())
+        .then_ignore(just(VToken::EndModule))
+        .map(|(name, body)| Module { name, body })
         .then_ignore(end())
 }

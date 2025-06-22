@@ -1,51 +1,58 @@
-// src/main.rs
-
-mod token;
-mod ast;
-mod parser;
-mod codegen;
-
-use logos::Logos;
-use chumsky::Parser;
-use chumsky::stream::Stream;
+use chumsky::prelude::*;
+use std::env;
+use std::error::Error;
 use std::fs;
 
-fn main() {
-    println!("--- Veride Compiler (veridec) v0.1 ---");
+mod ast;
+mod codegen;
+mod parser;
+mod token;
 
-    // Leggi il codice sorgente da un file
-    // Crea un file `source.vd` nella root del progetto col codice di esempio.
-    let source_code = fs::read_to_string("source.vd")
-        .expect("Impossibile leggere il file source.vd");
+use crate::parser::module_parser;
+use crate::token::{lexer, SimpleSpan};
 
-    // --- Fase 1: Lexing ---
-    let lexer = token::Token::lexer(&source_code);
-    let tokens: Vec<_> = lexer.filter_map(|try_token| try_token.ok()).collect();
+fn main() -> Result<(), Box<dyn Error>> {
+    let path = env::args().nth(1).expect("Usage: veridec <path>");
+    let src = fs::read_to_string(&path)?;
 
-    // --- Fase 2: Parsing ---
-    let token_stream = Stream::from_iter(tokens.len()..tokens.len(), tokens.into_iter());
-    let ast_result = parser::parser().parse(token_stream);
+    // 1. Esegui il Lexer
+    let (tokens, lex_errs) = lexer().parse_recovery(&src);
 
-    if ast_result.has_errors() {
-        eprintln!("\nErrore durante il parsing:");
-        for error in ast_result.errors() {
-            eprintln!("- {:?}", error);
-        }
+    // 2. Esegui il Parser
+    let (ast, parse_errs) = if let Some(tokens) = tokens {
+        // ---- LA MODIFICA FONDAMENTALE È QUI ----
+        // Creiamo uno stream che Chumsky capisce, a partire dal vettore di token.
+        // Lo span finale (eoi) aiuta a segnalare errori di fine file inaspettata.
+        let eoi = SimpleSpan::new(src.len(), src.len());
+        let stream = chumsky::Stream::from_iter(tokens.into_iter()).spanned(eoi);
+        
+        module_parser().parse_recovery(stream)
+    } else {
+        // Se il lexing fallisce completamente, non c'è nulla da parsare
+        (None, Vec::new())
+    };
+
+    // 3. Gestione e stampa degli errori
+    // Combina gli errori del lexer e del parser
+    let all_errors = lex_errs.into_iter().chain(parse_errs.into_iter());
+    let mut error_found = false;
+    for err in all_errors {
+        error_found = true;
+        // Qui si potrebbe usare una libreria come 'ariadne' per una stampa più bella
+        println!("{:?}", err);
     }
 
-    if let Some(ast) = ast_result.output() {
-        println!("Parsing completato con successo. AST generato.");
-        
-        // --- Fase 3: Code Generation ---
-        println!("Inizio generazione codice Verilog...");
-        let mut generator = codegen::CodeGenerator::new();
-        let verilog_code = generator.generate(ast);
-        
-        println!("\n--- OUTPUT VERILOG ---\n");
-        println!("{}", verilog_code);
-
-        // Scrivi l'output su file
-        fs::write("output.v", verilog_code).expect("Impossibile scrivere il file di output.");
-        println!("\n--- Scritto su output.v ---");
+    if error_found {
+        return Err("Compilazione fallita.".into());
     }
+
+    // 4. Successo
+    if let Some(ast) = ast {
+        println!("AST generato con successo:\n{:#?}", ast);
+        // Qui puoi riattivare il CodeGenerator
+    } else {
+        println!("Nessun AST generato (il file sorgente potrebbe essere vuoto o contenere solo errori).");
+    }
+
+    Ok(())
 }
