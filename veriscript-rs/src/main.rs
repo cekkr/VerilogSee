@@ -2,11 +2,9 @@ use chumsky::prelude::*;
 use std::env;
 use std::error::Error;
 use std::fs;
-// Ariadne è ottimo per stampare errori leggibili
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 
 mod ast;
-// mod codegen; // Temporaneamente commentato per risolvere gli errori principali
 mod parser;
 mod token;
 
@@ -22,12 +20,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // --- 2. PARSER ---
     if let Some(tokens) = &tokens {
-        // ---- LA CORREZIONE FONDAMENTALE È QUI ----
-        // Trasformiamo il `Vec<(VToken, SimpleSpan)>` in uno `Stream`
-        // che Chumsky può usare.
         let len = src.chars().count();
-        let stream = chumsky::Stream::from_iter(tokens.clone().into_iter()).spanned(len..len + 1);
-        
+        // Create a stream from the tokens that the parser can use.
+        let stream = chumsky::stream::Stream::from_iter(tokens.clone().into_iter()).spanned(len..len + 1);
         let (ast, parse_errs) = module_parser().parse_recovery(stream);
 
         // --- 3. GESTIONE ERRORI CON ARIADNE ---
@@ -54,7 +49,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("AST generato con successo:\n{:#?}", ast);
         }
     }
-
 
     Ok(())
 }

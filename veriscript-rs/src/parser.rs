@@ -1,5 +1,6 @@
 use chumsky::prelude::*;
 use chumsky::recursive::recursive;
+use chumsky::stream::Stream; // Import the Stream type
 
 use crate::ast::*;
 use crate::token::{SimpleSpan, VToken};
@@ -7,16 +8,17 @@ use crate::token::{SimpleSpan, VToken};
 // --- Tipi per chiarezza ---
 type Span = SimpleSpan;
 type Spanned<T> = (T, Span);
-type TokenStream<'a> = chumsky::Stream<'a, (VToken, Span), Span, std::iter::Cloned<std::slice::Iter<'a, (VToken, Span)>>>;
+// Define TokenStream as a slice of spanned tokens
+type TokenStream<'a> = &'a [Spanned<VToken>];
 
 // Usiamo un errore che riconosce i VToken, non più i caratteri
-type ParserError<'a> = extra::Err<Rich<'a, VToken, Span>>;
+type ParserError<'a> = extra::Err<Rich<'a, VToken>>;
 
-fn ident<'a>() -> impl Parser<'a, (VToken, Span), String, ParserError<'a>> {
+fn ident<'a>() -> impl Parser<'a, TokenStream<'a>, String, ParserError<'a>> {
     select! { VToken::Ident(s) => s }.labelled("identifier")
 }
 
-pub fn module_parser<'a>() -> impl Parser<'a, (VToken, Span), Module, ParserError<'a>> {
+pub fn module_parser<'a>() -> impl Parser<'a, TokenStream<'a>, Module, ParserError<'a>> {
     let declaration = recursive(|_decl| {
         let port_decl = select! { VToken::Input => PortDirection::Input, VToken::Output => PortDirection::Output }
             .then(select!{ VToken::Reg }.or_not())
@@ -36,7 +38,7 @@ pub fn module_parser<'a>() -> impl Parser<'a, (VToken, Span), Module, ParserErro
     select!{VToken::Module}
         .ignore_then(ident())
         .then(declaration.repeated().collect::<Vec<_>>().delimited_by(select!{VToken::LParen}, select!{VToken::RParen}))
-        .then_ignore(select!{ VToken::Semicolon })
+        .then_ignore(select!{VToken::Semicolon})
         .then_ignore(end()) // Assicurati che non ci sia altro dopo
         .map(|(name, body)| Module { name, body })
 }
