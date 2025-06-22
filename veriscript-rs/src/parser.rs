@@ -14,7 +14,9 @@ fn just<'a>(token: VToken) -> impl Parser<'a, TokenStream<'a>, (VToken, SimpleSp
 
 // Parser ausiliario per un identificatore.
 fn ident<'a>() -> impl Parser<'a, TokenStream<'a>, String, ParserError<'a>> + Clone {
-    any().try_map(|(token, span)| match token {
+    // CORREZIONE FINALE E UNICA: Applichiamo il suggerimento del compilatore.
+    // La closure ora accetta due argomenti: la tupla `(token, _)` e lo `span` dell'intera tupla.
+    any().try_map(|(token, _), span| match token {
         VToken::Ident(s) => Ok(s),
         _ => Err(Rich::custom(span, "Expected identifier")),
     })
@@ -22,7 +24,8 @@ fn ident<'a>() -> impl Parser<'a, TokenStream<'a>, String, ParserError<'a>> + Cl
 
 // Parser ausiliario per una direzione di porta.
 fn port_direction<'a>() -> impl Parser<'a, TokenStream<'a>, PortDirection, ParserError<'a>> + Clone {
-    any().try_map(|(token, span)| match token {
+    // CORREZIONE FINALE E UNICA: Applichiamo il suggerimento del compilatore.
+    any().try_map(|(token, _), span| match token {
         VToken::Input => Ok(PortDirection::Input),
         VToken::Output => Ok(PortDirection::Output),
         _ => Err(Rich::custom(span, "Expected 'input' or 'output'")),
@@ -53,8 +56,6 @@ pub fn module_parser<'a>() -> impl Parser<'a, TokenStream<'a>, Module, ParserErr
                 .delimited_by(just(VToken::LParen), just(VToken::RParen)),
         )
         .then_ignore(just(VToken::Semicolon))
-        // Ho rimosso la strategia di recovery errata, come suggerito dal compilatore
         .then_ignore(end())
         .map(|(name, body)| Module { name, body })
 }
-
