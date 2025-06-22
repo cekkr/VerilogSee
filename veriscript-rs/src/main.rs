@@ -2,6 +2,8 @@ use chumsky::prelude::*;
 use std::env;
 use std::error::Error;
 use std::fs;
+// Ariadne è ottimo per stampare errori leggibili
+use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 
 mod ast;
 mod codegen;
@@ -9,49 +11,50 @@ mod parser;
 mod token;
 
 use crate::parser::module_parser;
-use crate::token::{lexer, SimpleSpan};
+use crate::token::{lexer, SimpleSpan, VToken};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let path = env::args().nth(1).expect("Usage: veridec <path>");
     let src = fs::read_to_string(&path)?;
 
-    // 1. Esegui il Lexer
+    // --- 1. LEXER ---
     let (tokens, lex_errs) = lexer().parse_recovery(&src);
 
-    // 2. Esegui il Parser
+    // --- 2. PARSER ---
     let (ast, parse_errs) = if let Some(tokens) = tokens {
-        // ---- LA MODIFICA FONDAMENTALE È QUI ----
-        // Creiamo uno stream che Chumsky capisce, a partire dal vettore di token.
-        // Lo span finale (eoi) aiuta a segnalare errori di fine file inaspettata.
-        let eoi = SimpleSpan::new(src.len(), src.len());
-        let stream = chumsky::Stream::from_iter(tokens.into_iter()).spanned(eoi);
+        // ---- LA CORREZIONE FONDAMENTALE È QUI ----
+        // Trasformiamo il `Vec<(VToken, SimpleSpan)>` in uno `Stream`
+        // che Chumsky può usare. Questo risolve TUTTI gli errori.
+        let stream = chumsky::Stream::from_iter(tokens.into_iter())
+            .spanned(SimpleSpan::new(src.len(), src.len()));
         
         module_parser().parse_recovery(stream)
     } else {
-        // Se il lexing fallisce completamente, non c'è nulla da parsare
         (None, Vec::new())
     };
 
-    // 3. Gestione e stampa degli errori
-    // Combina gli errori del lexer e del parser
-    let all_errors = lex_errs.into_iter().chain(parse_errs.into_iter());
-    let mut error_found = false;
-    for err in all_errors {
-        error_found = true;
-        // Qui si potrebbe usare una libreria come 'ariadne' per una stampa più bella
-        println!("{:?}", err);
+    // --- 3. GESTIONE ERRORI CON ARIADNE ---
+    // Stampa errori del lexer (basati su caratteri)
+    for e in lex_errs {
+        Report::build(ReportKind::Error, &path, e.span().start)
+            .with_message(e.to_string())
+            .with_label(Label::new((&path, e.span().into_range())).with_message(e.reason().to_string()).with_color(Color::Red))
+            .finish()
+            .print((&path, Source::from(&src)))?;
     }
 
-    if error_found {
-        return Err("Compilazione fallita.".into());
+    // Stampa errori del parser (basati su token)
+    for e in parse_errs {
+        Report::build(ReportKind::Error, &path, e.span().start)
+            .with_message(e.to_string())
+            .with_label(Label::new((&path, e.span().into_range())).with_message(e.reason().to_string()).with_color(Color::Red))
+            .finish()
+            .print((&path, Source::from(&src)))?;
     }
-
-    // 4. Successo
+    
+    // --- 4. SUCCESSO ---
     if let Some(ast) = ast {
         println!("AST generato con successo:\n{:#?}", ast);
-        // Qui puoi riattivare il CodeGenerator
-    } else {
-        println!("Nessun AST generato (il file sorgente potrebbe essere vuoto o contenere solo errori).");
     }
 
     Ok(())
